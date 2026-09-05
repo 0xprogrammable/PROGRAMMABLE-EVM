@@ -7,6 +7,7 @@ import {
   createModuleModeState,
   defaultSchemaValue,
   feeBreakdown,
+  programmableFeeAllocation,
   parseExactUnits,
   LEGACY_V1_MODULE_CATALOG as PREVIEW_MODULE_CATALOG,
   PREVIEW_MODULE_CATALOG as NATIVE_CATALOG,
@@ -58,6 +59,21 @@ describe("Module Mode draft", () => {
     expect(parseExactUnits("9.99", 2)).toBe("999");
     expect(parseExactUnits("60", 0, "60")).toBe("3600");
     expect(() => parseExactUnits("9.999", 2)).toThrow("2 decimal places");
+  });
+
+  it("checks the active release minimum without changing the user's ETH amount", () => {
+    const state = validState();
+    const result = validateBuilder(state, NATIVE_CATALOG, {}, NATIVE_ENGINE_PROFILE, undefined, "1000000000000001");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues).toContainEqual({ path: "/initialBuyEth", message: "The launch minimum is 0.001000000000000001 ETH. Increase your initial buy." });
+    expect(state.initialBuyEth).toBe("0.001");
+    expect(validateBuilder(state, NATIVE_CATALOG, {}, NATIVE_ENGINE_PROFILE, undefined, "1000000000000000").ok).toBe(true);
+    for (const invalidMinimum of ["0", "-1", "1e3", "100.1", "", (1n << 127n).toString()]) {
+      expect(validateBuilder(state, NATIVE_CATALOG, {}, NATIVE_ENGINE_PROFILE, undefined, invalidMinimum).ok).toBe(false);
+    }
+    expect(programmableFeeAllocation(0)).toContain("full 0.20%");
+    expect(programmableFeeAllocation(1)).toContain("0.10% shared equally");
+    expect(programmableFeeAllocation(8)).toEqual(programmableFeeAllocation(1));
   });
 
   it("binds settings and preserves a removed module's complete configuration for undo", () => {

@@ -342,6 +342,12 @@ export function feeBreakdown(buyPercent: string, sellPercent: string) {
   return { buy: total(buyPercent), sell: total(sellPercent), programmable: "0.20%" };
 }
 
+export function programmableFeeAllocation(moduleCount: number) {
+  return moduleCount > 0
+    ? "0.10% to Programmable + 0.10% shared equally by the selected module authors."
+    : "The full 0.20% goes to Programmable when no modules are selected.";
+}
+
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (value !== null && typeof value === "object") return `{${Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, child]) => `${JSON.stringify(key)}:${stableJson(child)}`).join(",")}}`;
@@ -349,7 +355,7 @@ function stableJson(value: unknown): string {
 }
 
 /** A local configuration check, never release, admission, price or wallet authorization evidence. */
-export function validateModuleModeDraft(state: ModuleModeState, catalog: readonly ModuleModeCatalogEntry[] = PREVIEW_MODULE_CATALOG, context: OpenConfigContext = {}, engine: ModuleModeEngineProfile = NATIVE_ENGINE_PROFILE, nowSeconds = Math.floor(Date.now() / 1000)): DraftResult {
+export function validateModuleModeDraft(state: ModuleModeState, catalog: readonly ModuleModeCatalogEntry[] = PREVIEW_MODULE_CATALOG, context: OpenConfigContext = {}, engine: ModuleModeEngineProfile = NATIVE_ENGINE_PROFILE, nowSeconds = Math.floor(Date.now() / 1000), minimumInitialBuyWei?: string): DraftResult {
   const issues: BuilderIssue[] = [];
   if (!/^[a-z][a-z0-9_.-]{1,127}$/.test(engine.id) || !Number.isSafeInteger(engine.version) || engine.version < 1) issues.push({ path: "/engine", message: "The engine profile is missing or invalid. Refresh before reviewing." });
   const name = state.name.trim(); const symbol = state.symbol.trim(); const description = state.description.trim();
@@ -361,6 +367,13 @@ export function validateModuleModeDraft(state: ModuleModeState, catalog: readonl
   let initialBuyWei = "0";
   try { initialBuyWei = parseExactUnits(state.initialBuyEth, 18); if (BigInt(initialBuyWei) <= 0n || BigInt(initialBuyWei) > (1n << 127n) - 1n) throw new Error(); }
   catch { issues.push({ path: "/initialBuyEth", message: "Enter an ETH amount above 0, with up to 18 decimal places." }); }
+  if (minimumInitialBuyWei !== undefined) {
+    if (!/^[1-9]\d{0,77}$/.test(minimumInitialBuyWei) || BigInt(minimumInitialBuyWei) > (1n << 127n) - 1n) {
+      issues.push({ path: "/initialBuyEth", message: "The launch minimum could not be verified. Refresh availability before continuing." });
+    } else if (!issues.some((issue) => issue.path === "/initialBuyEth") && BigInt(initialBuyWei) < BigInt(minimumInitialBuyWei)) {
+      issues.push({ path: "/initialBuyEth", message: `The launch minimum is ${formatNativeWei(minimumInitialBuyWei)} ETH. Increase your initial buy.` });
+    }
+  }
   for (const [key, value] of [["buyFeePercent", state.buyFeePercent], ["sellFeePercent", state.sellFeePercent]]) {
     if (!/^(?:[0-9]|10)$/.test(value)) issues.push({ path: `/${key}`, message: "Choose a whole percentage from 0% to 10%." });
   }
