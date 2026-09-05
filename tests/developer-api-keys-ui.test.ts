@@ -491,7 +491,7 @@ describe("developer API key interface", () => {
   });
 
   it("gives module agents a source-intake setup without launch instructions or secrets", () => {
-    expect(PROGRAMMABLE_MODULE_AGENT_SETUP_TEXT_V1).toContain("$PROGRAMMABLE_API_KEY");
+    expect(PROGRAMMABLE_MODULE_AGENT_SETUP_TEXT_V1).toContain("$PROGRAMMABLE_MODULES_API_KEY");
     expect(PROGRAMMABLE_MODULE_AGENT_SETUP_TEXT_V1).toContain("modules:submit and modules:read");
     expect(PROGRAMMABLE_MODULE_AGENT_SETUP_TEXT_V1).toContain("GET https://api.programmable.market/v1/modules/capabilities");
     expect(PROGRAMMABLE_MODULE_AGENT_SETUP_TEXT_V1).toContain("POST /v1/modules/submissions");
