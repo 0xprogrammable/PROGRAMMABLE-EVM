@@ -26,6 +26,7 @@ describe("native Module Mode catalogue boundary", () => {
     expect(() => bindNativeCatalogEntry({ ...entry(), get management() { called = true; return {}; } })).toThrow();
     expect(called).toBe(false);
     expect(() => bindNativeCatalogEntry({ ...entry(), nativeBinding: { ...binding, callbackGas: 1 } })).toThrow();
+    expect(() => bindNativeCatalogEntry({ ...entry(), requiresHost: ["unknown.engine@99"] })).toThrow("unsupported host");
     expect(() => parseModuleModeAvailability({ schemaVersion: "programmable.module-mode.availability.v1", release: moduleEvidenceFixture().release, catalog: [entry(), entry()], reason: null })).toThrow();
     expect(() => parseModuleModeAvailability({ schemaVersion: "programmable.module-mode.availability.v1", release: null, catalog: [{ id: "bad-preview", status: "preview" }], reason: "Pending" })).toThrow();
   });

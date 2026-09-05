@@ -6,12 +6,16 @@ import { bindActiveModuleModeRelease, moduleAddress, moduleHash, moduleInteger, 
 
 export type { ModuleModeRelease } from "./release";
 export const MODULE_MODE_AVAILABILITY_SCHEMA = "programmable.module-mode.availability.v1" as const;
+export const MODULE_NATIVE_HOST_CAPABILITIES = [
+  "programmable.module-native-runtime@1", "programmable.module-native-budget@1",
+  "programmable.module-config-abi@1", "programmable.module-management@1",
+] as const;
 export interface ModuleModeNativeBinding {
   familyId: Hex; packageId: Hex; factory: Address; factoryCodeHash: Hex; moduleCodeHash: Hex;
   callbackGas: number; manifestHash: Hex; reviewDigest: Hex;
 }
 export type NativeModuleModeCatalogEntry = ModuleModeCatalogEntry & {
-  status: "available"; nativeBinding: ModuleModeNativeBinding; management?: unknown;
+  status: "available"; nativeBinding: ModuleModeNativeBinding; management?: unknown; requiresHost?: string[];
 };
 export interface ModuleModeAvailability {
   schemaVersion: typeof MODULE_MODE_AVAILABILITY_SCHEMA;
@@ -33,7 +37,8 @@ export function nativeJson(value: unknown, depth = 0, budget = { nodes: 0 }): un
   const descriptors = Object.getOwnPropertyDescriptors(value);
   if (Reflect.ownKeys(value).some(key => typeof key !== "string") || Object.keys(descriptors).some(key => !("value" in descriptors[key]) || (!descriptors[key].enumerable && key !== "length"))) throw new Error("Module data must not contain accessors.");
   if (Array.isArray(value)) {
-    if (value.length > 2048 || Object.keys(value).length !== value.length) throw new Error("Invalid module array.");
+    if (value.length > 2048 || Object.keys(value).length !== value.length || Reflect.ownKeys(value).length !== value.length + 1
+      || Array.from({ length: value.length }, (_, index) => descriptors[String(index)]).some(item => !item || !("value" in item))) throw new Error("Invalid module array.");
     return value.map(item => nativeJson(item, depth + 1, budget));
   }
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, nativeJson(item, depth + 1, budget)]));
@@ -67,6 +72,8 @@ function validateCatalogBase(entry: ModuleModeCatalogEntry) {
 export function bindNativeCatalogEntry(value: unknown): NativeModuleModeCatalogEntry {
   const entry = nativeJson(value) as NativeModuleModeCatalogEntry;
   validateCatalogBase(entry);
+  if (entry.requiresHost && (!Array.isArray(entry.requiresHost) || entry.requiresHost.length > 64
+    || entry.requiresHost.some(capability => !(MODULE_NATIVE_HOST_CAPABILITIES as readonly string[]).includes(capability)))) throw new Error("This module requires an unsupported host capability.");
   if (!entry || typeof entry !== "object" || typeof entry.id !== "string" || !/^[a-z][a-z0-9_.-]{1,127}$/.test(entry.id)
     || entry.status !== "available" || entry.engine?.id !== NATIVE_ENGINE_PROFILE.id || entry.engine?.version !== 1
     || typeof entry.version !== "string" || !entry.version || typeof entry.title !== "string" || !entry.title
