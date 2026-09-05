@@ -46,8 +46,27 @@ export function nativeCanonicalJson(value: unknown): string {
 export function moduleNativeCatalogDigest<T extends ModuleModeCatalogEntry>(entry: T): Hex {
   return sha256(toHex(nativeCanonicalJson(nativeJson(entry))));
 }
+function validateCatalogBase(entry: ModuleModeCatalogEntry) {
+  if (!entry || typeof entry !== "object" || typeof entry.id !== "string" || !/^[a-z][a-z0-9_.-]{1,127}$/.test(entry.id)
+    || !entry.engine || typeof entry.engine.id !== "string" || !Number.isSafeInteger(entry.engine.version) || entry.engine.version < 1
+    || typeof entry.engine.label !== "string" || !Object.hasOwn(entry, "defaults")
+    || [entry.title, entry.summary, entry.detail, entry.version].some(text => typeof text !== "string" || text.length > 4000)
+    || !entry.title || !entry.version || !entry.source || typeof entry.source.path !== "string" || !entry.source.path
+    || typeof entry.source.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(entry.source.sha256)) throw new Error("Invalid module catalog entry.");
+  assertOpenConfigSchema(entry.schema); assertOpenConstraints(entry.constraints ?? []);
+  if (entry.fields) {
+    if (typeof entry.fields !== "object" || Array.isArray(entry.fields)) throw new Error("Invalid module display fields.");
+    for (const field of Object.values(entry.fields)) {
+      if (!field || typeof field !== "object" || Array.isArray(field)
+        || (field.decimals !== undefined && (!Number.isSafeInteger(field.decimals) || field.decimals < 0 || field.decimals > 77))
+        || (field.input !== undefined && field.input !== "duration" && field.input !== "datetime-utc")
+        || [field.suffix, field.placeholder, field.multiplier].some(value => value !== undefined && typeof value !== "string")) throw new Error("Invalid module display field.");
+    }
+  }
+}
 export function bindNativeCatalogEntry(value: unknown): NativeModuleModeCatalogEntry {
   const entry = nativeJson(value) as NativeModuleModeCatalogEntry;
+  validateCatalogBase(entry);
   if (!entry || typeof entry !== "object" || typeof entry.id !== "string" || !/^[a-z][a-z0-9_.-]{1,127}$/.test(entry.id)
     || entry.status !== "available" || entry.engine?.id !== NATIVE_ENGINE_PROFILE.id || entry.engine?.version !== 1
     || typeof entry.version !== "string" || !entry.version || typeof entry.title !== "string" || !entry.title
@@ -78,6 +97,7 @@ export function parseModuleModeAvailability(value: unknown): ModuleModeAvailabil
       return bindNativeCatalogEntry(entry);
     }
     if ((entry as ModuleModeCatalogEntry)?.status !== "preview") throw new Error("Invalid module catalog state.");
+    validateCatalogBase(entry as ModuleModeCatalogEntry);
     return entry as ModuleModeCatalogEntry;
   });
   if (new Set(catalog.map(entry => entry.id)).size !== catalog.length) throw new Error("Duplicate module catalog IDs.");
