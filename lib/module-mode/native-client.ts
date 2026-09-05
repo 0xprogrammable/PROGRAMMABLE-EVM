@@ -1,5 +1,5 @@
 import {
-  createPublicClient, decodeEventLog, decodeFunctionResult, encodeAbiParameters, encodeFunctionData,
+  createPublicClient, decodeEventLog, decodeFunctionResult, encodeAbiParameters, encodeEventTopics, encodeFunctionData,
   erc20Abi, getCreate2Address, http, keccak256, parseAbiParameters, sha256, toHex,
   type Abi, type AbiParameter, type Address, type Hex, type PublicClient, type TransactionReceipt,
 } from "viem";
@@ -50,7 +50,7 @@ export interface ModuleNativeApprovalRequired { kind: "approval-required"; token
 export interface ModuleNativeImageBinding { uri: string; sourceSha256?: Hex }
 type BoundBlock = { release: ModuleModeRelease; blockNumber: bigint; blockHash: Hex; timestamp: bigint };
 type PrivateBinding = {
-  client: ModuleNativeClient; release: ModuleModeRelease; refresh: () => Promise<void>;
+  client: ModuleNativeClient; release: ModuleModeRelease; refresh: () => Promise<bigint>;
   receipt: (receipt: TransactionReceipt) => Promise<ModuleNativeReceiptResult>;
 };
 const preparations = new WeakMap<PreparedModuleNativeTransaction, PrivateBinding>();
@@ -296,6 +296,7 @@ export async function prepareModuleNativeLaunch(input: PrepareModuleNativeLaunch
       const result = launchRecord(decodeFunctionResult({ abi: moduleNativeLaunchAbi, functionName: "launch", data: next.data }));
       same(result.token, predictedToken, "Current launch token"); same(result.recipeHash, recipeHash, "Current launch recipe"); same(result.launchKey, launchKey, "Current launch key");
       requireCondition(result.initialBuyTokens >= prepared.minimumTokenOut, "Current launch output is below the reviewed minimum."); await assertCanonical(client, current);
+      return next.gasEstimate;
     },
     receipt: async receipt => {
       const current = await assertModuleNativeRelease({ client, release: block.release, blockNumber: receipt.blockNumber });
@@ -360,6 +361,7 @@ export async function prepareModuleNativeSwap(input: PrepareModuleNativeSwapInpu
     const current = await assertModuleNativeRelease({ client, release: block.release }); requireCondition(current.timestamp <= deadline, "Swap review expired. Prepare again.");
     await boundLaunch(client, current, token); const result = await simulate(client, tx, current.blockNumber);
     const [native, tokens] = decodeFunctionResult({ abi: moduleNativeRouterAbi, functionName: "swap", data: result.data }); verify(native, tokens); await assertCanonical(client, current);
+    return result.gasEstimate;
   }, receipt: async receipt => {
     const event = oneEvent(receipt, router, moduleNativeRouterAbi, "NativeTradeCompleted");
     same(event.poolId, record.poolId, "Swap pool"); same(event.actor, account, "Swap actor"); same(event.recipient, recipient, "Swap recipient");
@@ -382,6 +384,7 @@ export async function prepareModuleNativeApproval(input: { client: ModuleNativeC
     const current = await assertModuleNativeRelease({ client, release: block.release }); requireCondition(current.timestamp <= deadline, "Approval review expired. Prepare again.");
     await boundLaunch(client, current, token); const next = await simulate(client, tx, current.blockNumber);
     requireCondition(decodeFunctionResult({ abi: moduleNativeApprovalAbi, functionName: "approve", data: next.data }) === true, "Current approval simulation failed."); await assertCanonical(client, current);
+    return next.gasEstimate;
   }, receipt: async receipt => {
     const event = oneEvent(receipt, token, erc20Abi, "Approval"); same(event.owner, account, "Approval owner"); same(event.spender, router, "Approval spender");
     requireCondition(event.value === amount, "Approval amount mismatch.");
@@ -398,10 +401,11 @@ export async function revalidateModuleNativeTransaction(prepared: PreparedModule
   requireCondition(!pending.has(prepared) && !submitted.has(prepared), "This review has already been used. Prepare again before signing.");
   pending.add(prepared);
   try {
-    await binding.refresh();
+    const currentGasEstimate = await binding.refresh();
+    requireCondition(currentGasEstimate <= prepared.gasEstimate, "The gas estimate increased. Prepare again before signing.");
     requireCondition(await binding.client.getChainId() === 4663, "RPC chain changed during preparation.");
     submitted.add(prepared);
-    return { ...prepared.transaction, gas: toHex(prepared.gasEstimate) };
+    return { ...prepared.transaction, gas: toHex(currentGasEstimate) };
   } finally { pending.delete(prepared); }
 }
 function oneEvent(receipt: TransactionReceipt, address: Address, abi: Abi, eventName: string): Record<string, unknown> {
@@ -413,7 +417,14 @@ function oneEvent(receipt: TransactionReceipt, address: Address, abi: Abi, event
       if (decoded.eventName !== eventName) continue;
       requireCondition(!log.removed && log.transactionHash === receipt.transactionHash && log.blockHash === receipt.blockHash && log.blockNumber === receipt.blockNumber, "Receipt event block or transaction mismatch.");
       requireCondition(decoded.args && !Array.isArray(decoded.args), "Malformed named receipt event.");
-      events.push(decoded.args as unknown as Record<string, unknown>);
+      const args = decoded.args as unknown as Record<string, unknown>;
+      const eventAbi = abi.find(item => item.type === "event" && item.name === eventName);
+      requireCondition(eventAbi?.type === "event", "Receipt event ABI mismatch.");
+      const topics = encodeEventTopics({ abi, eventName, args } as never);
+      requireCondition(topics.length === log.topics.length && topics.every((topic, i) => topic === log.topics[i]), "Noncanonical receipt event topics.");
+      const fields = eventAbi.inputs.filter(field => !field.indexed);
+      same(encodeAbiParameters(fields, fields.map(field => args[field.name!])), log.data, "Canonical receipt event data");
+      events.push(args);
     } catch (error) { if (error instanceof Error && error.message.startsWith("Module Mode:")) throw error; }
   }
   requireCondition(events.length === 1, `Expected exactly one ${eventName} event from the bound contract.`); return events[0];
